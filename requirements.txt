@@ -1,0 +1,16 @@
+certifi==2026.1.4
+charset-normalizer==3.4.4
+colorama==0.4.6
+idna==3.11
+logzero==1.7.0
+numpy>=1.24.0
+pandas>=2.0.0
+pyotp==2.9.0
+python-dateutil==2.9.0.post0
+requests==2.32.5
+scipy>=1.10.0
+six==1.17.0
+smartapi-python==1.5.5
+urllib3==2.6.3
+websocket-client==1.9.0
+yfinance>=0.2.28

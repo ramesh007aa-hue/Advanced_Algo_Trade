@@ -1,0 +1,130 @@
+--- PAGE 1 ---
+Technical  Speciﬁcation:  " Options  Oracle " 
+Algorithm ic  Trading  System
+1. System Architecture and Data Flow
+The "Options Oracle" is a multi-layered, event-driven system designed for high-frequency, 
+auto-intraday scalping of Indian index options (Nifty, BankNifty, Sensex). Its core strength is 
+the synthesis of quantitative metrics with a sophisticated AI decision engine, all built on the 
+Zerodha Kite Connect ecosystem.
+1.1 Data Ingestion Layer (Kite Ticker WebSocket)
+•Source: wss://ws.kite.trade (Kite Ticker WebSocket)
+•Mode: Full Mode subscription for all relevant instruments (Index Spot, India VIX, and a 
+basket of $\pm 3$ ATM options).
+•Data Points: Real-time LTP, OHLC, Volume, Open Interest (OI), and 5-level Market 
+Depth (Bid/Ask Price, Quantity, Orders).
+•Function: Broadcasts raw tick data to the Metrics Calculation Layer.
+2. Metrics Calculation Layer (The Signal Engine)
+This layer transforms raw ticks into actionable, weighted scores, prioritizing predictive 
+indicators for scalping.
+2.1 Core Index Metrics (Standard)
+•Put-Call Ratio (PCR): Calculated from total OI. Used for sentiment classiﬁcation (e.g., 
+BEARISH, NEUTRAL, BULLISH, EXTREME FEAR/GREED).
+•Trend Direction: Based on Spot Price vs. VWAP and Previous Close.
+•Liquidity Grade: Initial check based on Bid-Ask Spread and Depth.
+2.2 Weighted Scoring System
+The system uses a Combined Score to determine trade viability, with a strong bias towards 
+leading indicators.
+Plain Text
+\text{Combined Score} = (\text{Leading Score} \times 0.65) + (\text{Lagging 
+--- PAGE 2 ---
+Score} \times 0.35) + \text{PDR Penalty}
+2.3 Enhanced Options-Speciﬁc Metrics (New)
+These are calculated client-side to overcome Kite API limitations and improve OTM 
+accuracy:
+•Implied Volatility Skew (IVS) Score (0-15): Calculated by back-solving for IV using a 
+Black-Scholes-Merton model on OTM Call and Put LTPs. A high $\text{IV}{\text{Call}} > 
+\text{IV}{\text{Put}}$ indicates a bullish options market bias.
+•Premium Decay Rate (PDR) Penalty (0 to -10): Measures the percentage drop in 
+option LTP over the last 5 minutes. Acts as a critical constraint; a high penalty forces a 
+HOLD or EXIT_ALL regardless of the directional score.
+•Liquidity Momentum Score (LMS) (0-10): Measures the rate of change in the 5-level 
+Market Depth over the last 5 minutes. A positive score conﬁrms institutional liquidity 
+inﬂow, validating the trade entry.
+3. Contextualization and Adaptive Risk
+The system's risk management is dynamic, adapting to market conditions before the AI is 
+consulted.
+Score Component Max Points Metrics Included Technical Basis
+Leading Score 65VIX Momentum, OI 
+Dynamics, Volume 
+Impulse, IV Skew 
+(IVS), Liquidity 
+Momentum (LMS), 
+VALP Factor.Predictive, options-
+speciﬁc, and 
+dynamic indicators.
+Lagging Score 35RSI (14), Moving 
+Average Crossover 
+(9/21), Historical 
+Volatility.Conﬁrmatory, time-
+series based 
+indicators.
+PDR Penalty -10Premium Decay 
+Rate (PDR).Real-time theta/IV 
+crush risk 
+management.
+Contextual Factor Mechanism Adaptive Action
+--- PAGE 3 ---
+4. AI Decision Engine (ATC-AI Service)
+The AI acts as the ﬁnal arbiter, synthesizing the entire context into an actionable decision.
+•Model: GPT-4o-mini (or equivalent LLM).
+•Input: A comprehensive MarketContext JSON object containing all 20+ metrics, 
+including the new IVS, PDR, and LMS scores, plus historical performance data and 
+global macro context.
+•Communication Protocol: Uses OpenAI's Structured JSON Output Mode 
+(response_format: { type: "json_object" }) to ensure the AI's output is always machine-
+readable and prevents "language" mismatches.
+•Output Schema: Strict JSON object with ﬁelds: action (TRADE_CE, TRADE_PE, HOLD, 
+EXIT_ALL, REVERSE), conﬁdence (0-100), reasoning, and strikeGuidance.
+•Safety Fallback: On AI failure (malformed JSON, API error), the system defaults to a 
+HOLD action with 50% conﬁdence, which is below the execution threshold.
+5. Trade Execution Layer (Auto-Trade Service)
+This layer is responsible for risk-controlled order placement and position management.
+5.1 The 7-Step Validation Chain
+Every AI decision must pass a 7-step sequential validation before an order is placed:
+1.AI Gating Check: Veriﬁes decision age, conﬁdence $\geq$ adaptive threshold, and 
+action validity (including the newly integrated REVERSE logic).
+VIX RegimeClassiﬁes market as 
+ULTRA_LOW, NORMAL_LOW, 
+SPIKING, or PANIC based on 
+India VIX level.Dynamically adjusts the 
+required AI Conﬁdence 
+Threshold (e.g., 75% in 
+ULTRA_LOW to 55% in PANIC).
+Market PhaseClassiﬁes time of day (e.g., 
+OPENING_VOLATILITY, 
+MIDDAY_LULL).Adjusts the AI Decision 
+Interval (e.g., 90s in high 
+volatility, 240s in low volume) 
+and applies penalties (e.g., 
++10% threshold penalty in 
+opening volatility).
+Failure ConstraintsHistorical analysis of win 
+rates by VIX regime, market 
+phase, and liquidity grade.Blocks trade execution if 
+current conditions have a 
+historical win rate below 40%.
+--- PAGE 4 ---
+2.Strike Alignment Check: Conﬁrms the selected strike adheres to the AI's strikeGuidance 
+(e.g., $\text{Delta} \geq 0.25$, $\text{IV} \leq 25%$).
+3.Margin Check: Conﬁrms suﬃcient free margin via Kite API.
+4.Position Limits: Checks against user-deﬁned max positions.
+5.Market Hours Check: Conﬁrms trade is within 9:20 AM - 3:28 PM IST.
+6.Circuit Breaker Check: Veriﬁes daily loss and drawdown limits are not breached.
+7.Order Execution: Places the order via kite.placeOrder() and immediately sets up a two-
+leg GTT (Good Till Triggered) for Stop-Loss and Target.
+5.2 Audit and Synchronization
+•Audit Trail: Every trade is logged in the auto_trade_log table, linked by ai_decision_id to 
+the exact atc_decision_log entry that approved it. This creates an immutable, traceable 
+audit trail for post-mortem analysis and the learning loop.
+•Synchronization: Real-time updates (AI decisions, position P&L) are pushed to the 
+frontend via WebSocket (ws://host:PORT/ws), with a REST polling fallback for 
+redundancy.
+•Standardization: All index symbols are standardized to the short form (NIFTY, 
+BANKNIFTY) across the entire stack to ensure seamless data ﬂow and synchronization.
+6. Conclusion
+The "Options Oracle" system is a state-of-the-art, closed-loop algorithmic trading 
+framework. It moves beyond simple indicator-based trading by integrating a sophisticated, 
+adaptive AI decision layer. The recent additions of IVS, PDR, and LMS metrics speciﬁcally 
+address the high-risk nature of OTM options, transforming the system into a highly 
+specialized and robust tool for capturing high-momentum scalping opportunities while 
+managing the critical threat of theta decay.
